@@ -53,3 +53,13 @@ sh setupV6.sh [IPv6_CIDR] [LOGIN] [PASSWORD]
 | `sh setupV6.sh "" myuser secret` | авто | myuser | secret |
 
 Пароль со спецсимволами (`$`, `!`, `&`, `@`) заключать в одинарные кавычки:
+
+
+
+## Вариант 3: IPv4 3proxy (install-proxy.sh)
+
+Установка:
+
+```bash
+git clone https://github.com/suvorix/proxy-server && cd proxy-server && sh install-proxy.sh suvorix suvorix
+```
