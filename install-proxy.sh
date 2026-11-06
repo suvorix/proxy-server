@@ -1,13 +1,17 @@
 #!/bin/bash
 # =============================================================================
-# Установщик 3proxy с несколькими IP
+# Установщик 3proxy с несколькими IP (или автоматическим определением основного)
 #
 # Использование:
-#   chmod +x install-proxy.sh
-#   ./install-proxy.sh <логин> <пароль> <IP1,IP2,IP3...>
+#   ./install-proxy.sh <логин> <пароль> [IP1,IP2,... | auto]
 #
-# Пример:
-#   ./install-proxy.sh suvorix MyStrongPass 1.2.3.4,1.2.3.5,1.2.3.6
+# Примеры:
+#   ./install-proxy.sh suvorix MyPass auto
+#   ./install-proxy.sh suvorix MyPass
+#   ./install-proxy.sh suvorix MyPass 1.2.3.4,1.2.3.5
+#
+# Если третий аргумент не указан, равен "auto" или "0.0.0.0",
+# скрипт автоматически определит публичный IP сервера.
 #
 # Результат:
 #   Для каждого IP создаются два порта:
@@ -19,15 +23,15 @@
 set -e
 
 # --- Проверка аргументов ---
-if [ "$#" -ne 3 ]; then
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
     echo "Ошибка: неверное количество аргументов."
-    echo "Использование: $0 <логин> <пароль> <IP1,IP2,...>"
+    echo "Использование: $0 <логин> <пароль> [IP1,IP2,... | auto]"
     exit 1
 fi
 
 PROXY_USER="$1"
 PROXY_PASS="$2"
-IP_LIST="$3"
+IP_LIST="${3:-auto}"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Ошибка: скрипт должен быть запущен от root (sudo)." >&2
@@ -39,12 +43,24 @@ echo ">>> Установка 3proxy..."
 apt update
 apt install -y 3proxy ufw curl
 
+# --- Определение IP-списка ---
+# Если передан auto / 0.0.0.0 / пусто — определяем публичный IP сервера
+if [ "$IP_LIST" = "auto" ] || [ "$IP_LIST" = "0.0.0.0" ] || [ -z "$IP_LIST" ]; then
+    echo ">>> Автоопределение публичного IP сервера..."
+    DETECTED_IP=$(curl -s --max-time 10 https://api.ipify.org || true)
+    if [ -z "$DETECTED_IP" ]; then
+        echo "Ошибка: не удалось определить публичный IP. Укажите его вручную." >&2
+        exit 1
+    fi
+    IP_LIST="$DETECTED_IP"
+    echo "    Определён IP: $DETECTED_IP"
+fi
+
 # --- Формирование конфигурации ---
 echo ">>> Генерация конфигурации..."
 
 CONFIG_FILE="/etc/3proxy/3proxy.cfg"
 
-# Базовые настройки
 cat > "$CONFIG_FILE" <<EOF
 nserver 8.8.8.8
 nserver 1.1.1.1
@@ -57,14 +73,11 @@ auth strong
 allow ${PROXY_USER}
 EOF
 
-# Переменные для нумерации портов
 SOCKS_PORT=1080
 HTTP_PORT=3080
 
-# Разбор IP-адресов и добавление блоков
 IFS=',' read -ra IPS <<< "$IP_LIST"
 for IP in "${IPS[@]}"; do
-    # Убираем возможные пробелы
     IP=$(echo "$IP" | xargs)
     if [ -z "$IP" ]; then
         continue
@@ -80,7 +93,6 @@ socks -p${SOCKS_PORT}
 proxy -p${HTTP_PORT}
 EOF
 
-    # Открываем порты в UFW
     ufw allow "${SOCKS_PORT}/tcp" >/dev/null 2>&1 || true
     ufw allow "${HTTP_PORT}/tcp" >/dev/null 2>&1 || true
 
@@ -93,7 +105,6 @@ echo ">>> Перезапуск 3proxy..."
 systemctl restart 3proxy
 systemctl enable 3proxy
 
-# --- Перезагрузка UFW (если активен) ---
 if ufw status | grep -q "Status: active"; then
     echo ">>> Перезагрузка UFW..."
     ufw reload
